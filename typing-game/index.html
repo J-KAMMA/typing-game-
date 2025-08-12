@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>文章生成タイピング</title>
+<style>
+:root{
+  --bg: #0b0f14; --grad1:#0b0f14; --grad2:#101827; --card:rgba(255,255,255,.06);
+  --stroke:rgba(255,255,255,.08); --text:#e9eef6; --muted:#9fb0c7;
+  --accent:#7aa2f7; --accent-2:#79dcaa;
+  --shadow:0 10px 30px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.04);
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0;background:radial-gradient(1200px 600px at 10% 0%, #0e1626 0%, transparent 60%),
+  linear-gradient(180deg,var(--grad1),var(--grad2));color:var(--text);
+  font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI","Noto Sans JP","Hiragino Kaku Gothic ProN",Meiryo,sans-serif;
+  -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
+}
+.page{max-width:900px;margin:40px auto;padding:0 20px}
+.header{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:18px}
+.header h1{font-size:clamp(22px,2.4vw,28px);letter-spacing:.2px;margin:0}
+.metrics{display:flex;gap:18px;color:var(--muted)}
+.metrics b{color:var(--text);font-variant-numeric:tabular-nums}
+.card{background:var(--card);border:1px solid var(--stroke);border-radius:16px;padding:20px;box-shadow:var(--shadow);backdrop-filter:blur(8px)}
+.toolbar{display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap}
+.toolbar input,.toolbar select{padding:10px 12px;border-radius:12px;background:#121a28;color:var(--text);border:1px solid var(--stroke);min-width:140px}
+.toolbar button{padding:10px 14px;border-radius:12px;background:#121a28;color:var(--text);border:1px solid var(--stroke);cursor:pointer;transition:transform .06s ease,border-color .2s}
+.toolbar button:hover{border-color:var(--accent);transform:translateY(-1px)}
+.target{white-space:pre-wrap;line-height:1.9;letter-spacing:.2px;padding:14px;border-radius:12px;border:1px dashed var(--stroke);color:#e5ecfa;background:rgba(122,162,247,.06);margin:0 0 12px}
+.typing-area{
+  width:100%;resize:vertical;font:16px/1.85 ui-monospace,"SFMono-Regular",Menlo,Consolas,monospace;
+  color:var(--text);background:#0c1320;border:1px solid var(--stroke);border-radius:12px;
+  padding:14px 14px 120px;outline:none;caret-color:var(--accent);scroll-margin-bottom:140px;
+}
+.typing-area:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(122,162,247,.2)}
+.progressbar{height:8px;border-radius:999px;background:rgba(255,255,255,.08);margin-top:14px;overflow:hidden}
+.progressbar .bar{height:100%;background:linear-gradient(90deg,var(--accent),var(--accent-2));transition:width .25s ease}
+.foot{color:var(--muted);text-align:center;margin:16px 0 24px;font-size:12px}
+@media (max-width:600px){.typing-area{font-size:15px;padding-bottom:100px}.target{line-height:1.8}}
+</style>
+</head>
+<body>
+<div class="page">
+  <header class="header">
+    <h1>文章生成タイピング</h1>
+    <div class="metrics">
+      <span>WPM <b id="wpm">0</b></span>
+      <span>ACC <b id="acc">100%</b></span>
+      <span>PROG <b id="prog">0%</b></span>
+    </div>
+  </header>
+
+  <main class="card">
+    <div class="toolbar">
+      <select id="style">
+        <option>論説</option><option>物語</option><option>宣言</option>
+      </select>
+      <select id="length">
+        <option value="short">短め</option>
+        <option value="medium" selected>ふつう</option>
+        <option value="long">長め</option>
+      </select>
+      <select id="difficulty">
+        <option value="simple">かんたん</option>
+        <option value="normal" selected>ふつう</option>
+        <option value="advanced">むずかしい</option>
+      </select>
+      <input id="topic" placeholder="トピック（例：不老不死）" value="不老不死" />
+      <button id="regen">文を再生成</button>
+      <button id="reset">リセット</button>
+      <button id="copy">テキストをコピー</button>
+    </div>
+
+    <pre class="target" id="target" aria-label="お手本テキスト"></pre>
+    <textarea id="input" class="typing-area" rows="8" placeholder="ここにタイピング…（IME確定で計測）" lang="ja" autocomplete="off" autocorrect="off" spellcheck="false"></textarea>
+    <div class="progressbar"><div class="bar" id="bar" style="width:0%"></div></div>
+  </main>
+
+  <footer class="foot">データはすべてブラウザ内で処理されます</footer>
+</div>
+
+<script>
+// ---------- 文生成（自然文：テンプレ＋語彙クラスタ） ----------
+const VOCABS = {
+  baseNouns:["社会","技術","身体","記憶","制度","倫理","時間","現実","未来","共同体","意識","環境","資源"],
+  baseVerbs:["更新する","接続する","保証する","否定する","設計する","観測する","統合する","改善する","維持する","拡張する"],
+  connectors:["しかし","一方で","つまり","加えて","とりわけ","結果として","だからこそ","とはいえ","同時に"],
+  endings:["。","。","。","。","。","。","。","。","――"],
+  styles:{
+    "論説":{tone:["要するに","結論から言えば","本質的には","実務上"],verbs:["検討する","定義する","位置づける","評価する"]},
+    "物語":{tone:["ある朝","そのとき","やがて","静かな夜に"],verbs:["歩き出す","見つめ直す","思い出す","確かめる"]},
+    "宣言":{tone:["われは宣言する","ここに明記する","いま確信する"],verbs:["拒否する","約束する","遂行する","徹底する"]}
+  },
+  topicBoosts:{
+    "不老不死":{nouns:["老化","再生医療","連続性","記録","保存","治療","ナノ医療"],verbs:["介入する","維持する","遡及する"]},
+    "教育":{nouns:["学習","習慣","理解","対話","記述"],verbs:["育む","設計する","共有する"]},
+    "経済":{nouns:["資本","流動性","需要","制度設計","分配"],verbs:["最適化する","調整する","可視化する"]}
+  }
+};
+const PATTERNS=[
+  "{TONE}{COMMA}{TOPIC}の{N1}を{V1}{END}",
+  "{TOPIC}では{N1}が鍵となり{CONNECTOR}{N2}を{V2}{END}",
+  "{CONNECTOR}{N1}をめぐる誤解をほどき{N2}を{V1}{END}",
+  "{TOPIC}の現場で{N1}を観測し{CONNECTOR}{N2}を再配置する{END}",
+  "私たちは{N1}を軸に{V1}ことで{N2}を確かにする{END}",
+];
+const rnd=a=>a[Math.floor(Math.random()*a.length)];
+function generateText({topic="不老不死",style="論説",length="medium",difficulty="normal"}={}){
+  const s=VOCABS.styles[style]||VOCABS.styles["論説"];
+  const boost=VOCABS.topicBoosts[topic]||{nouns:[],verbs:[]};
+  const nouns=[...VOCABS.baseNouns,...boost.nouns];
+  const verbs=[...VOCABS.baseVerbs,...(s.verbs||[]),...(boost.verbs||[])];
+  const sentenceCount=length==="long"?9:length==="medium"?6:3;
+  const clauseChance=difficulty==="advanced"?0.9:difficulty==="normal"?0.5:0.2;
+  const out=[];
+  for(let i=0;i<sentenceCount;i++){
+    const TONE=Math.random()<0.6?rnd(s.tone||[""]):"";
+    const COMMA=TONE?"、":"";
+    const CONNECTOR=rnd(VOCABS.connectors);
+    const N1=rnd(nouns);
+    const N2=rnd(nouns.filter(n=>n!==N1));
+    const V1=rnd(verbs);
+    const V2=rnd(verbs.filter(v=>v!==V1));
+    const END=rnd(VOCABS.endings);
+    let line=rnd(PATTERNS)
+      .replace("{TONE}",TONE).replace("{COMMA}",COMMA)
+      .replaceAll("{TOPIC}",topic).replace("{CONNECTOR}",CONNECTOR)
+      .replace("{N1}",N1).replace("{N2}",N2)
+      .replace("{V1}",V1).replace("{V2}",V2)
+      .replace("{END}",END);
+    if(Math.random()<clauseChance){
+      line+=` ${rnd(VOCABS.connectors)} ${rnd(nouns)}を${rnd(verbs)}${rnd(VOCABS.endings)}`;
+    }
+    line=line.replace(/\s+/g," ").replace(/ 、/g,"、").trim();
+    out.push(line);
+  }
+  return out.join("\n");
+}
+
+// ---------- UI & ロジック（IME対策込み） ----------
+const elTarget=document.getElementById("target");
+const elInput=document.getElementById("input");
+const elBar=document.getElementById("bar");
+const elWPM=document.getElementById("wpm");
+const elACC=document.getElementById("acc");
+const elPROG=document.getElementById("prog");
+const elStyle=document.getElementById("style");
+const elLen=document.getElementById("length");
+const elDiff=document.getElementById("difficulty");
+const elTopic=document.getElementById("topic");
+const btnRegen=document.getElementById("regen");
+const btnReset=document.getElementById("reset");
+const btnCopy=document.getElementById("copy");
+
+let targetText = "";
+let isComposing = false;
+let startedAt = null;
+let typedCount = 0; // composition確定分のみ加算
+
+function regen() {
+  targetText = generateText({
+    topic: elTopic.value.trim() || "不老不死",
+    style: elStyle.value,
+    length: elLen.value,
+    difficulty: elDiff.value
+  });
+  elTarget.textContent = targetText;
+  resetTyping(false);
+}
+function resetTyping(clearInput=true){
+  if (clearInput) elInput.value="";
+  isComposing=false; typedCount=0; startedAt=null;
+  updateMetrics();
+  // IME候補バーが被らないようスクロール
+  requestAnimationFrame(()=>elInput.scrollIntoView({block:"center", inline:"nearest"}));
+}
+
+// メトリクス更新
+function updateMetrics(){
+  const input = elInput.value;
+  const correct = [...input].reduce((ok, ch, i)=> ok + (ch === targetText[i] ? 1 : 0), 0);
+  const acc = input.length ? Math.round((correct / input.length) * 100) : 100;
+  elACC.textContent = acc + "%";
+
+  const prog = Math.min(input.length / Math.max(targetText.length,1), 1);
+  elPROG.textContent = Math.round(prog*100) + "%";
+  elBar.style.width = (prog*100) + "%";
+
+  const wpm = (()=> {
+    if (!startedAt) return 0;
+    const minutes = (Date.now() - startedAt) / 60000;
+    const words = typedCount / 5;
+    return minutes>0 ? Math.round(words / minutes) : 0;
+  })();
+  elWPM.textContent = String(wpm);
+}
+
+// 入力ハンドラ（IME対策）
+elInput.addEventListener("compositionstart", ()=>{ isComposing=true; });
+elInput.addEventListener("compositionupdate", ()=>{ /* 計測しない */ });
+elInput.addEventListener("compositionend", (e)=>{
+  isComposing=false;
+  // composition確定分を加算
+  const val = e.target.value;
+  // 差分（確定したぶんだけ加算）
+  typedCount += Math.max(0, val.length - (elInput._prevLen || 0));
+  elInput._prevLen = val.length;
+  updateMetrics();
+  requestAnimationFrame(()=>elInput.scrollIntoView({block:"center", inline:"nearest"}));
+});
+
+elInput.addEventListener("input", (e)=>{
+  const val = e.target.value;
+  if (!startedAt && val.length>0) startedAt = Date.now();
+  if (!isComposing){
+    typedCount += Math.max(0, val.length - (elInput._prevLen || 0));
+    elInput._prevLen = val.length;
+  }
+  updateMetrics();
+  requestAnimationFrame(()=>elInput.scrollIntoView({block:"center", inline:"nearest"}));
+});
+
+// selection 変化でも追従（Chrome/EdgeのIMEで候補が被りにくくなる）
+elInput.addEventListener("select", ()=>{
+  requestAnimationFrame(()=>elInput.scrollIntoView({block:"center", inline:"nearest"}));
+});
+
+// ボタン
+btnRegen.addEventListener("click", regen);
+btnReset.addEventListener("click", ()=>resetTyping(true));
+btnCopy.addEventListener("click", ()=>{
+  navigator.clipboard.writeText(targetText);
+  btnCopy.textContent="コピーしました";
+  setTimeout(()=>btnCopy.textContent="テキストをコピー",1200);
+});
+
+// 初期化
+regen();
+</script>
+</body>
+</html>
